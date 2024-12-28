@@ -100,94 +100,143 @@ export class TwitterPostClient {
     private lastProcessTime: number = 0;
     private stopProcessingActions: boolean = false;
 
+    // async start(postImmediately: boolean = false) {
+    //     if (!this.client.profile) {
+    //         await this.client.init();
+    //     }
+
+    //     const generateNewTweetLoop = async () => {
+    //         const lastPost = await this.runtime.cacheManager.get<{
+    //             timestamp: number;
+    //         }>("twitter/" + this.twitterUsername + "/lastPost");
+
+    //         const lastPostTimestamp = lastPost?.timestamp ?? 0;
+    //         const minMinutes =
+    //             parseInt(this.runtime.getSetting("POST_INTERVAL_MIN")) || 90;
+    //         const maxMinutes =
+    //             parseInt(this.runtime.getSetting("POST_INTERVAL_MAX")) || 180;
+    //         const randomMinutes =
+    //             Math.floor(Math.random() * (maxMinutes - minMinutes + 1)) +
+    //             minMinutes;
+    //         const delay = randomMinutes * 60 * 1000;
+
+    //         if (Date.now() > lastPostTimestamp + delay) {
+    //             await this.generateNewTweet();
+    //         }
+
+    //         setTimeout(() => {
+    //             generateNewTweetLoop(); // Set up next iteration
+    //         }, delay);
+
+    //         elizaLogger.log(`Next tweet scheduled in ${randomMinutes} minutes`);
+    //     };
+
+    //     const processActionsLoop = async () => {
+    //         const actionInterval =
+    //             parseInt(this.runtime.getSetting("ACTION_INTERVAL")) || 300000; // Default to 5 minutes
+
+    //         while (!this.stopProcessingActions) {
+    //             try {
+    //                 const results = await this.processTweetActions();
+    //                 if (results) {
+    //                     elizaLogger.log(`Processed ${results.length} tweets`);
+    //                     elizaLogger.log(
+    //                         `Next action processing scheduled in ${actionInterval / 1000} seconds`
+    //                     );
+    //                     // Wait for the full interval before next processing
+    //                     await new Promise((resolve) =>
+    //                         setTimeout(resolve, actionInterval)
+    //                     );
+    //                 }
+    //             } catch (error) {
+    //                 elizaLogger.error(
+    //                     "Error in action processing loop:",
+    //                     error
+    //                 );
+    //                 // Add exponential backoff on error
+    //                 await new Promise((resolve) => setTimeout(resolve, 30000)); // Wait 30s on error
+    //             }
+    //         }
+    //     };
+
+    //     if (
+    //         this.runtime.getSetting("POST_IMMEDIATELY") != null &&
+    //         this.runtime.getSetting("POST_IMMEDIATELY") != ""
+    //     ) {
+    //         postImmediately = parseBooleanFromText(
+    //             this.runtime.getSetting("POST_IMMEDIATELY")
+    //         );
+    //     }
+
+    //     if (postImmediately) {
+    //         await this.generateNewTweet();
+    //     }
+    //     generateNewTweetLoop();
+
+    //     // Add check for ENABLE_ACTION_PROCESSING before starting the loop
+    //     const enableActionProcessing =
+    //         this.runtime.getSetting("ENABLE_ACTION_PROCESSING") ?? false;
+
+    //     if (enableActionProcessing) {
+    //         processActionsLoop().catch((error) => {
+    //             elizaLogger.error(
+    //                 "Fatal error in process actions loop:",
+    //                 error
+    //             );
+    //         });
+    //     } else {
+    //         elizaLogger.log("Action processing loop disabled by configuration");
+    //     }
+    //     generateNewTweetLoop();
+    // }
+
+    // Fixed implementation
     async start(postImmediately: boolean = false) {
         if (!this.client.profile) {
             await this.client.init();
         }
 
+        // Check if we have a last post timestamp
+        const lastPost = await this.runtime.cacheManager.get<{
+            timestamp: number;
+        }>("twitter/" + this.twitterUsername + "/lastPost");
+
         const generateNewTweetLoop = async () => {
-            const lastPost = await this.runtime.cacheManager.get<{
-                timestamp: number;
-            }>("twitter/" + this.twitterUsername + "/lastPost");
+            const minMinutes = parseInt(this.runtime.getSetting("POST_INTERVAL_MIN")) || 90;
+            const maxMinutes = parseInt(this.runtime.getSetting("POST_INTERVAL_MAX")) || 180;
+            const randomMinutes = Math.floor(Math.random() * (maxMinutes - minMinutes + 1)) + minMinutes;
+            const delay =  60000 // # randomMinutes * 60 * 1000;
 
-            const lastPostTimestamp = lastPost?.timestamp ?? 0;
-            const minMinutes =
-                parseInt(this.runtime.getSetting("POST_INTERVAL_MIN")) || 90;
-            const maxMinutes =
-                parseInt(this.runtime.getSetting("POST_INTERVAL_MAX")) || 180;
-            const randomMinutes =
-                Math.floor(Math.random() * (maxMinutes - minMinutes + 1)) +
-                minMinutes;
-            const delay = randomMinutes * 60 * 1000;
+            // Only generate tweet if enough time has passed since last post
+            const now = Date.now();
+            const lastPostTimestamp = lastPost?.timestamp ?? (now - (delay + 1)); // If no last post, assume enough time has passed
 
-            if (Date.now() > lastPostTimestamp + delay) {
+            if (now > lastPostTimestamp + delay) {
                 await this.generateNewTweet();
+                // Update last post timestamp after successful tweet
+                await this.runtime.cacheManager.set(
+                    `twitter/${this.twitterUsername}/lastPost`,
+                    { timestamp: now }
+                );
             }
 
-            setTimeout(() => {
-                generateNewTweetLoop(); // Set up next iteration
-            }, delay);
+            console.log("DELAY:", delay)
 
-            elizaLogger.log(`Next tweet scheduled in ${randomMinutes} minutes`);
+            // Schedule next check
+            setTimeout(generateNewTweetLoop, delay);
         };
 
-        const processActionsLoop = async () => {
-            const actionInterval =
-                parseInt(this.runtime.getSetting("ACTION_INTERVAL")) || 300000; // Default to 5 minutes
-
-            while (!this.stopProcessingActions) {
-                try {
-                    const results = await this.processTweetActions();
-                    if (results) {
-                        elizaLogger.log(`Processed ${results.length} tweets`);
-                        elizaLogger.log(
-                            `Next action processing scheduled in ${actionInterval / 1000} seconds`
-                        );
-                        // Wait for the full interval before next processing
-                        await new Promise((resolve) =>
-                            setTimeout(resolve, actionInterval)
-                        );
-                    }
-                } catch (error) {
-                    elizaLogger.error(
-                        "Error in action processing loop:",
-                        error
-                    );
-                    // Add exponential backoff on error
-                    await new Promise((resolve) => setTimeout(resolve, 30000)); // Wait 30s on error
-                }
-            }
-        };
-
-        if (
-            this.runtime.getSetting("POST_IMMEDIATELY") != null &&
-            this.runtime.getSetting("POST_IMMEDIATELY") != ""
-        ) {
-            postImmediately = parseBooleanFromText(
-                this.runtime.getSetting("POST_IMMEDIATELY")
+        // Only post immediately if explicitly set and no recent posts
+        if (postImmediately && (!lastPost || Date.now() > lastPost.timestamp + (90 * 60 * 1000))) {
+            await this.generateNewTweet();
+            await this.runtime.cacheManager.set(
+                `twitter/${this.twitterUsername}/lastPost`,
+                { timestamp: Date.now() }
             );
         }
 
-        if (postImmediately) {
-            await this.generateNewTweet();
-        }
-        generateNewTweetLoop();
-
-        // Add check for ENABLE_ACTION_PROCESSING before starting the loop
-        const enableActionProcessing =
-            this.runtime.getSetting("ENABLE_ACTION_PROCESSING") ?? false;
-
-        if (enableActionProcessing) {
-            processActionsLoop().catch((error) => {
-                elizaLogger.error(
-                    "Fatal error in process actions loop:",
-                    error
-                );
-            });
-        } else {
-            elizaLogger.log("Action processing loop disabled by configuration");
-        }
-        generateNewTweetLoop();
+        // Start the loop
+        await generateNewTweetLoop();
     }
 
     constructor(client: ClientBase, runtime: IAgentRuntime) {
@@ -198,6 +247,20 @@ export class TwitterPostClient {
 
     private async generateNewTweet() {
         elizaLogger.log("Generating new tweet");
+
+        const lastPost = await this.runtime.cacheManager.get<{
+            timestamp: number;
+        }>("twitter/" + this.twitterUsername + "/lastPost");
+
+        if (lastPost) {
+            const minInterval = parseInt(this.runtime.getSetting("POST_INTERVAL_MIN")) || 90;
+            const elapsedMinutes = (Date.now() - lastPost.timestamp) / (60 * 1000);
+
+            if (elapsedMinutes < minInterval) {
+                elizaLogger.log(`Not enough time elapsed since last tweet (${elapsedMinutes.toFixed(2)} minutes). Waiting for ${minInterval} minutes.`);
+                return;
+            }
+        }
 
         try {
             const roomId = stringToUuid(
@@ -241,7 +304,7 @@ export class TwitterPostClient {
             const newTweetContent = await generateText({
                 runtime: this.runtime,
                 context,
-                modelClass: ModelClass.SMALL,
+                modelClass: ModelClass.LARGE,
             });
 
             // First attempt to clean content
@@ -394,7 +457,7 @@ export class TwitterPostClient {
         const response = await generateText({
             runtime: this.runtime,
             context: options?.context || context,
-            modelClass: ModelClass.SMALL,
+            modelClass: ModelClass.LARGE,
         });
         console.log("generate tweet content response:\n" + response);
 

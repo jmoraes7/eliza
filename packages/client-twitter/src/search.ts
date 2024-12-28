@@ -55,15 +55,18 @@ export class TwitterSearchClient {
     }
 
     async start() {
+        console.log("ENGAGING WITH  SEARCH TERMS:")
+
         this.engageWithSearchTermsLoop();
     }
 
     private engageWithSearchTermsLoop() {
+        console.log("STARTING LOOP")
         this.engageWithSearchTerms();
-        setTimeout(
-            () => this.engageWithSearchTermsLoop(),
-            (Math.floor(Math.random() * (120 - 60 + 1)) + 60) * 60 * 1000
-        );
+        // setTimeout(
+        //     () => this.engageWithSearchTermsLoop(),
+        //     (Math.floor(Math.random() * (120 - 60 + 1)) + 60) * 60 * 1000
+        // );
     }
 
     private async engageWithSearchTerms() {

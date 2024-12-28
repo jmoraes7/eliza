@@ -123,11 +123,52 @@ export class TwitterInteractionClient {
                 )
             ).tweets;
 
+            // 2. Get replies to our tweets
+            const ourTweets = await this.client.fetchOwnPosts(10);
+            elizaLogger.log(
+                "Fetching our own tweets:",
+                ourTweets
+            );
+            const replySearches = await Promise.all(
+                ourTweets.map(tweet =>
+                    this.client.fetchSearchTweets(
+                        `conversation_id:${tweet.conversationId}`,
+                        10,
+                        SearchMode.Latest
+                    )
+                )
+            );
+
+            elizaLogger.log(
+                "Completed checking replies:",
+                replySearches
+            );
+
+
+
             elizaLogger.log(
                 "Completed checking mentioned tweets:",
                 mentionCandidates.length
             );
-            let uniqueTweetCandidates = [...mentionCandidates];
+            // let uniqueTweetCandidates = [...mentionCandidates];
+
+            // 3. Combine all interactions
+            let uniqueTweetCandidates = [
+                ...mentionCandidates,
+                ...replySearches
+                    .filter(result => result && result.tweets && result.tweets.length > 0)
+                    .flatMap(result => result.tweets)
+            ]
+
+            const x = replySearches
+                    .filter(result => result && result.tweets && result.tweets.length > 0)
+                    .flatMap(result => result.tweets)
+
+            elizaLogger.log(
+                "FILTERED REPLIES:",
+                x
+            );
+
             // Only process target users if configured
             if (targetUsersStr && targetUsersStr.trim()) {
                 const TARGET_USERS = targetUsersStr
@@ -211,6 +252,7 @@ export class TwitterInteractionClient {
                     // Add selected tweets to candidates
                     uniqueTweetCandidates = [
                         ...mentionCandidates,
+                        ...replySearches.flatMap(result => result.tweets),
                         ...selectedTweets,
                     ];
                 }
@@ -222,8 +264,21 @@ export class TwitterInteractionClient {
 
             // Sort tweet candidates by ID in ascending order
             uniqueTweetCandidates
+                .filter((tweet, index, self) =>
+                    // Remove duplicates
+                    index === self.findIndex(t => t.id === tweet.id) &&
+                    // Filter out our own tweets
+                    tweet.userId !== this.client.profile.id &&
+                    // Check if tweet is recent (within last 2 hours)
+                    (Date.now() - tweet.timestamp * 1000) < 2 * 60 * 60 * 1000
+                )
                 .sort((a, b) => a.id.localeCompare(b.id))
                 .filter((tweet) => tweet.userId !== this.client.profile.id);
+
+            elizaLogger.log(
+                "UNIQUE TWEET CANDIDATES:",
+                uniqueTweetCandidates
+            );
 
             // for each tweet candidate, handle the tweet
             for (const tweet of uniqueTweetCandidates) {

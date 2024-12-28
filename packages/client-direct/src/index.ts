@@ -2,7 +2,7 @@ import bodyParser from "body-parser";
 import cors from "cors";
 import express, { Request as ExpressRequest } from "express";
 import multer, { File } from "multer";
-import { elizaLogger, generateCaption, generateImage } from "@elizaos/core";
+import { elizaLogger, generateCaption, generateImage, generateText } from "@elizaos/core";
 import { composeContext } from "@elizaos/core";
 import { generateMessageResponse } from "@elizaos/core";
 import { messageCompletionFooter } from "@elizaos/core";
@@ -20,6 +20,25 @@ import { createApiRouter } from "./api.ts";
 import * as fs from "fs";
 import * as path from "path";
 const upload = multer({ storage: multer.memoryStorage() });
+
+const twitterPostTemplate = `
+# Areas of Expertise
+{{knowledge}}
+
+# About {{agentName}} (@{{twitterUserName}}):
+{{bio}}
+{{lore}}
+{{topics}}
+
+{{providers}}
+
+{{characterPostExamples}}
+
+{{postDirections}}
+
+# Task: Generate a post in the voice and style and perspective of {{agentName}} @{{twitterUserName}}.
+Write a 1-3 sentence post that is {{adjective}} about {{topic}} (without mentioning {{topic}} directly), from the perspective of {{agentName}}. Do not add commentary or acknowledge this request, just write the post.
+Your response should not contain any questions. Brief, concise statements only. The total character count MUST be less than {{maxTweetLength}}. No emojis. Use \\n\\n (double spaces) between statements.`;
 
 export const messageHandlerTemplate =
     // {{goals}}
@@ -176,6 +195,9 @@ export class DirectClient {
                     agentId: runtime.agentId,
                 };
 
+                console.log("\n\nUser Message:", userMessage)
+                console.log("\n\n")
+
                 const memory: Memory = {
                     id: messageId,
                     agentId: runtime.agentId,
@@ -191,16 +213,23 @@ export class DirectClient {
                     agentName: runtime.character.name,
                 });
 
+                console.log("\n\nSTATE:", state)
+                console.log("\n\n")
+
                 const context = composeContext({
                     state,
                     template: messageHandlerTemplate,
                 });
+
+                console.log("\n\nContext:", context)
+                console.log("\n\n")
 
                 const response = await generateMessageResponse({
                     runtime: runtime,
                     context,
                     modelClass: ModelClass.LARGE,
                 });
+
 
                 // save response to memory
                 const responseMessage = {
@@ -236,6 +265,109 @@ export class DirectClient {
                     res.json([response, message]);
                 } else {
                     res.json([response]);
+                }
+            }
+        );
+
+        this.app.post(
+            "/:agentId/generateTweet",
+            async (req: express.Request, res: express.Response) => {
+                try {
+                    const agentId = req.params.agentId;
+                    let runtime = this.agents.get(agentId);
+
+                    // if runtime is null, look for runtime with the same name
+                    if (!runtime) {
+                        runtime = Array.from(this.agents.values()).find(
+                            (a) => a.character.name.toLowerCase() === agentId.toLowerCase()
+                        );
+                    }
+
+                    if (!runtime) {
+                        res.status(404).send("Agent not found");
+                        return;
+                    }
+
+                    const roomId = stringToUuid("generate_tweet_room-" + runtime.agentId);
+
+                    // Ensure room and participant exist
+                    await runtime.ensureUserExists(
+                        runtime.agentId,
+                        runtime.character.name,
+                        runtime.character.name,
+                        "direct"
+                    );
+
+                    // Get topics for context
+                    const topics = runtime.character.topics.join(", ");
+
+                    // Compose state for tweet generation
+                    const state = await runtime.composeState(
+                        {
+                            userId: runtime.agentId,
+                            roomId: roomId,
+                            agentId: runtime.agentId,
+                            content: {
+                                text: topics || '',
+                                action: "TWEET",
+                            },
+                        },
+                        {
+                            twitterUserName: runtime.character.username,
+                        }
+                    );
+
+                    // Generate tweet using the built-in generation functions
+                    const context = composeContext({
+                        state,
+                        template: runtime.character.templates?.twitterPostTemplate || twitterPostTemplate,
+                    });
+
+                    console.log("\n\nCONTENT:", context)
+                    console.log("\n\n")
+
+                    const newTweetContent = await generateText({
+                        runtime: runtime,
+                        context,
+                        modelClass: ModelClass.LARGE,
+                    });
+
+                    console.log("NEW TWEET CONTENT:", newTweetContent);
+                    console.log("\n\n");
+
+                    // Clean up the response
+                    let cleanedContent = '';
+                    try {
+                        const parsedResponse = JSON.parse(newTweetContent);
+                        cleanedContent = parsedResponse.text || parsedResponse;
+                    } catch (error) {
+                        cleanedContent = newTweetContent
+                            .replace(/^\s*{?\s*"text":\s*"|"\s*}?\s*$/g, '')
+                            .replace(/^['"](.*)['"]$/g, '$1')
+                            .replace(/\\"/g, '"')
+                            .replace(/\\n/g, '\n')
+                            .trim();
+                    }
+
+                    // Return the generated tweet
+                    // res.json({
+                    //     success: true,
+                    //     tweet: cleanedContent
+                    // });
+
+                    res.json([{
+                        text: cleanedContent,
+                        user: runtime.character.name,
+                        success: true,
+                        tweet: cleanedContent
+                    }]);
+
+                } catch (error) {
+                    elizaLogger.error("Error generating tweet:", error);
+                    res.status(500).json({
+                        success: false,
+                        error: error.message
+                    });
                 }
             }
         );
